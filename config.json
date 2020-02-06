@@ -1,0 +1,116 @@
+{
+    "dataset_reader": {
+        "type": "tacred_reader",
+        "bert_model": "bert-base-cased",
+        "lazy": true,
+        "token_indexers": {
+            "bert": {
+                "type": "bert-pretrained",
+                "do_lowercase": false,
+                "pretrained_model": "bert-base-cased",
+                "use_starting_offsets": false
+            }
+        },
+        "tokenizer": {
+            "type": "word",
+            "word_splitter": {
+                "type": "my-bert-basic-tokenizer",
+                "do_lower_case": false
+            }
+        }
+    },
+    "iterator": {
+        "type": "basic",
+        "batch_size": 8,
+        "instances_per_epoch": null
+    },
+    "model": {
+        "type": "relation_clasification",
+        "add_distance_from_mean": true,
+        "drop_out_rate": 0.2,
+        "hidden_dim": 768,
+        "number_of_linear_layers": 2,
+        "regularizer": [
+            [
+                ".*no_relation.*",
+                {
+                    "alpha": 0.001,
+                    "type": "l2"
+                }
+            ],
+            [
+                "liner_layer",
+                {
+                    "alpha": 0.001,
+                    "type": "l2"
+                }
+            ],
+            [
+                ".*",
+                {
+                    "alpha": 1e-07,
+                    "type": "l2"
+                }
+            ]
+        ],
+        "text_field_embedder": {
+            "allow_unmatched_keys": true,
+            "embedder_to_indexer_map": {
+                "bert": [
+                    "bert"
+                ]
+            },
+            "token_embedders": {
+                "bert": {
+                    "type": "bert-pretrained",
+                    "pretrained_model": "bert-base-cased",
+                    "requires_grad": true,
+                    "top_layer_only": true
+                }
+            }
+        }
+    },
+    "train_data_path": "/home/nlp/amirdnc/data/tacred/data/json/train.json",
+    "validation_data_path": "/home/nlp/amirdnc/data/tacred/data/json/dev.json",
+    "trainer": {
+        "cuda_device": [
+            0,
+            1,
+            2,
+            3
+        ],
+        "num_epochs": 500,
+        "num_serialized_models_to_keep": 1,
+        "optimizer": {
+            "type": "adam",
+            "lr": 2e-05
+        },
+        "patience": 300,
+        "validation_metric": "+f1"
+    },
+    "validation_dataset_reader": {
+        "type": "tacred_reader",
+        "bert_model": "bert-base-cased",
+        "lazy": false,
+        "token_indexers": {
+            "bert": {
+                "type": "bert-pretrained",
+                "do_lowercase": false,
+                "pretrained_model": "bert-base-cased",
+                "use_starting_offsets": false
+            }
+        },
+        "tokenizer": {
+            "type": "word",
+            "word_splitter": {
+                "type": "my-bert-basic-tokenizer",
+                "do_lower_case": false
+            }
+        }
+    },
+    "validation_iterator": {
+        "type": "basic",
+        "batch_size": 8,
+        "instances_per_epoch": null
+    }
+}
