@@ -1,7 +1,8 @@
 local cuda = [0,1,2,3];
 local bert_type = 'bert-base-cased';
 local train_data = {
-"tacred_base": "/home/nlp/amirdnc/data/siamese/train4_big.json",
+"tacred_base": "data/train3_per-country_of_death_per-charges_per-schools_attended_few.json",
+//"tacred_base": "/home/nlp/amirdnc/data/siamese/train4_rand.json",
 "on_the_fly":"data/fewrel_train_markers.json",
 "normal": "data/bert_base/BASE_TRAIN_NOTA_100.json",
 "full_training": "data/bert_base/BASE_TRAIN_NOTA_100K.json" ,
@@ -11,7 +12,8 @@ local train_data = {
 };
 
 local dev_data = {
-"tacred_base": "/home/nlp/amirdnc/data/siamese/dev4_rand.json",
+"tacred_base": "data/dev3_per-country_of_death_per-charges_per-schools_attended_few.json",
+//"tacred_base": "/home/nlp/amirdnc/data/siamese/dev4_rand.json",
 "normal": "data/bert_base/BASE_VAL_NOTA_100.json",
 "full_training": "data/bert_base/BASE_VAL_NOTA_5K.json" ,
 "max_query_training": "data/bert_base/BASE_VAL_NOTA_5K.json" ,
@@ -21,14 +23,14 @@ local dev_data = {
 "no_entities": "data/bert_base/BASE_VAL_NOTA_5K.json"
 };
 //local bert_type = 'bert-large-cased';
-local batch_size = 8;
+local batch_size = 7;
 local setup = "tacred_base";
 local lr_with_find = 0.00002;
 local instances_per_epoch = 100;
-
+local reader = "siamese_ner_reader";
 {
   "dataset_reader": {
-    "type": "siamese_reader",
+    "type": reader,
     "bert_model": bert_type,
     "lazy": true,
     "tokenizer": {
@@ -48,7 +50,7 @@ local instances_per_epoch = 100;
     }
   },
     "validation_dataset_reader": {
-    "type": "siamese_reader",
+    "type": reader,
     "bert_model": bert_type,
     "lazy": false,
     "tokenizer": {
@@ -70,7 +72,8 @@ local instances_per_epoch = 100;
   "train_data_path": train_data[setup] ,
   "validation_data_path": dev_data[setup],
   "model": {
-    "type": "siamese_sentences",
+    "type": "siamese_ner_sentences",
+    //"type": "siamese_sentences",
     "hidden_dim": 2000,
     "add_distance_from_mean": true,
     "number_of_linear_layers": 2,

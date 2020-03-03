@@ -1,3 +1,4 @@
+import re
 from typing import Dict
 from typing import List
 import json
@@ -110,6 +111,30 @@ def load_annotated_tokens(infile, debug=False):
 
 
 
+@DatasetReader.register("dep_reader")
+class DepReader(DatasetReader):
+    def __init__(self,
+                 lazy: bool = False,
+                 tokenizer: Tokenizer = None,
+                 token_indexers: Dict[str, TokenIndexer] = None, debug=False) -> None:
+        super().__init__(lazy)
+        self.debug = debug
+        self._token_indexers = token_indexers or {"tokens": SingleIdTokenIndexer()}
+    @overrides
+    def _read(self, file_path):
+        with open(cached_path(file_path), "r") as data_file:
+            logger.info("Reading instances from json files at: %s", data_file)
+            data = json.load(data_file)
+            if self.debug:
+                data = data[:500]  # for debugging
+            for x in data:
+                yield self.text_to_instance(x)
+    @overrides
+    def text_to_instance(self, data: dict) -> Instance:  # type: ignore
+        field_of_tokens = TextField(data['sdp'], self._token_indexers)
+        return Instance({'sen_dep':field_of_tokens, 'label': LabelField(data['relation'])})
+
+
 
 @DatasetReader.register("tacred_reader")
 class TacredReader(DatasetReader):
@@ -191,9 +216,53 @@ class SiameseReader(TacredReader):
     def text_to_instance(self, data: dict) -> Instance:  # type: ignore
         s0 = data[0]
         s1 = data[1]
-        l0 = [s0['indexes'][0], s0['indexes'][2]]
-        l1 = [s1['indexes'][0], s1['indexes'][2]]
-        return Instance({'sen1':self.tokenize(data[0]), 'sen2': self.tokenize(data[1]), 'loc': ListField([MetadataField(l0), MetadataField(l1)]), 'label': LabelField(data[2], skip_indexing=True)})  # , 'sentence': TextField(' '.join(data['token']))})}
+        if 'indexes' not in s0:
+            s0 = add_word_markers(s0)
+            s1 = add_word_markers(s1)
+        sen1 = self._tokenizer.tokenize(' '.join(s0['token']))
+        sen2 = self._tokenizer.tokenize(' '.join(s1['token']))
+        l0 = [sen1.index(x) + 1 for x in self.marker_tokens]
+        l1 = [sen2.index(x) + 1 for x in self.marker_tokens]
+        return Instance({'sen1': TextField(sen1, self._token_indexers), 'sen2': TextField(sen2, self._token_indexers), 'loc': ListField([MetadataField(l0), MetadataField(l1)]), 'label': LabelField(data[2], skip_indexing=True)})  # , 'sentence': TextField(' '.join(data['token']))})}
+
+@DatasetReader.register("siamese_ner_reader")
+class SiameseNerReader(SiameseReader):
+    def __init__(self,
+                 bert_model: str,
+                 lazy: bool = False,
+                 tokenizer: Tokenizer = None,
+                 token_indexers: Dict[str, TokenIndexer] = None, debug=False) -> None:
+        super().__init__(bert_model, lazy, tokenizer, token_indexers, debug)
+        self.ner_idx = create_ner_indx(NerDict('ner_dict.json').d)
+
+    @overrides
+    def text_to_instance(self, data: dict) -> Instance:  # type: ignore
+        s0 = data[0]
+        s1 = data[1]
+        i = super().text_to_instance(data)
+        return Instance({'sen1': i.fields['sen1'], 'sen2': i.fields['sen2'],
+                         'loc': i.fields['loc'], 'label': i.fields['label'], 'ner': MetadataField([self.ner_idx[s0['subj_type']], self.ner_idx[s0['obj_type']], self.ner_idx[s1['subj_type']], self.ner_idx[s1['obj_type']]])})  # , 'sentence': TextField(' '.join(data['token']))})}
+
+@DatasetReader.register("relation_ner_reader")
+class RelationAndNERReader(TacredReader):
+    def __init__(self,
+                 bert_model: str,
+                 lazy: bool = False,
+                 tokenizer: Tokenizer = None,
+                 token_indexers: Dict[str, TokenIndexer] = None, debug=False, mode='basic') -> None:
+        super().__init__(bert_model, lazy, tokenizer, token_indexers, debug)
+
+        self.ner_idx = create_ner_indx(NerDict('ner_dict.json').d)
+
+    @overrides
+    def text_to_instance(self, data: dict) -> Instance:  # type: ignore
+        data = add_word_markers(data)
+        tokenized_tokens = self._tokenizer.tokenize(' '.join(data['token']))
+        field_of_tokens = TextField(tokenized_tokens, self._token_indexers)
+        marker_loc = [tokenized_tokens.index(x) + 1 for x in self.marker_tokens]  # +1 for the ['cls'] token
+        return Instance({'sen': field_of_tokens, 'loc': MetadataField(marker_loc),
+                         'label': LabelField(data['relation']), 'ner': MetadataField([self.ner_idx[data['subj_type']], self.ner_idx[data['obj_type']]])})
+
 
 @DatasetReader.register("multi_ner_reader")
 class MultiNERReader(TacredReader):
@@ -224,3 +293,27 @@ class MultiNERReader(TacredReader):
 
         return Instance({'sen0': texts[0], 'sen1': texts[1], 'sen2': texts[2], 'loc0': markers[0], 'loc1': markers[1], 'loc2': markers[2],
                          'label': LabelField(data['relation'])})  # , 'sentence': TextField(' '.join(data['token']))})
+
+
+def create_ner_indx(d):
+    return {r: int(re.findall(r'\d+', v)[0]) - 6 for r,v in d.items()}
+
+# @DatasetReader.register("relation_ner_reader")
+# class RelationAndNERReader(TacredReader):
+#     def __init__(self,
+#                  bert_model: str,
+#                  lazy: bool = False,
+#                  tokenizer: Tokenizer = None,
+#                  token_indexers: Dict[str, TokenIndexer] = None, debug=False, mode='basic') -> None:
+#         super().__init__(bert_model, lazy, tokenizer, token_indexers, debug)
+#
+#         self.ner_idx = create_ner_indx(NerDict('ner_dict.json').d)
+#
+#     @overrides
+#     def text_to_instance(self, data: dict) -> Instance:  # type: ignore
+#         data = add_word_markers(data)
+#         tokenized_tokens = self._tokenizer.tokenize(' '.join(data['token']))
+#         field_of_tokens = TextField(tokenized_tokens, self._token_indexers)
+#         marker_loc = [tokenized_tokens.index(x) + 1 for x in self.marker_tokens]  # +1 for the ['cls'] token
+#         return Instance({'sen': field_of_tokens, 'loc': MetadataField(marker_loc),
+#                          'label': LabelField(data['relation']), 'ner': MetadataField([self.ner_idx[data['subj_type']], self.ner_idx[data['obj_type']]])})

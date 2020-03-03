@@ -4,8 +4,8 @@ import sys
 
 from allennlp.commands import main
 
-config_file = "siamese_config.jsonnet"
-# config_file = "supervised_config.jsonnet"
+# config_file = "siamese_config.jsonnet"
+config_file = "supervised_config.jsonnet"
 
 # Use overrides to train on CPU.
 # overrides = json.dumps({"trainer":{"cuda_device": -1},"iterator": {"type": "basic", "batch_size": 2,"instances_per_epoch":4}})
@@ -59,14 +59,21 @@ sys.argv = [
 #     r'/home/nlp/amirdnc/code/active-relation-extruction/data/tacred-test.json',
 #     "--predictor", "base-tagger",
 #     "--include-package", "my_lib",
-#     "--cuda-device", "0"
-    # "-o", overrides,
+#     "--cuda-device", "0",
+#     "-o", overrides,
 # ]
 
 # sys.argv = [
 #      'allennlp',
 #      'predict', 'results/siamese_4_shuffle', 'data/tacred-siamese-dev1.txt', '--include-package',
 #      'my_lib', '--predictor', 'siamese-tagger', '--cuda-device', '0'
+# ]
+
+# sys.argv = 'allennlp predict results/supervised_two_basic single.json  --include-package my_lib --predictor base-tagger --cuda-device 0'.split()
+# sys.argv = [
+#      'allennlp',
+#      'evaluate', 'results/siamese_rand', '/home/nlp/amirdnc/data/siamese/dev4_rand.json', '--include-package',
+#      'my_lib', '--cuda-device', '0'
 # ]
 
 main()

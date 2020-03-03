@@ -9,7 +9,8 @@ def create_new_file(source, target):
     print('done')
 
 if __name__ == '__main__':
-    source = r'/home/nlp/amirdnc/data/tacred/data/json/train.json'
+    source = '/home/nlp/sharos/span_bert/SpanBERT/permut_ALL_wiki_pure_exlusive_pred/data/json/test_24-33.json'
     # source = '../../../data/siamese/dev1.json'
-    target = '../data/tacred-train-for-prediction.txt'
+    target = r'/home/nlp/amirdnc/data/shahar_temp.json'
+    # target = '../data/siamese_testte4_rand_ner.txt'
     create_new_file(source, target)

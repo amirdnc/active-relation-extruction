@@ -1,34 +1,30 @@
-local cuda = 3;
+local cuda = 2;
 //local cuda = [3];
 local bert_type = 'bert-base-cased';
-local mode = 'ner';
+local mode = 'basic';
 local train_data = {
 "tacred_base": "/home/nlp/amirdnc/data/tacred/data/json/train.json",
-"on_the_fly":"data/fewrel_train_markers.json",
-"normal": "data/bert_base/BASE_TRAIN_NOTA_100.json",
-"full_training": "data/bert_base/BASE_TRAIN_NOTA_100K.json" ,
-"max_query_training": "data/bert_base/max_query_picking/BERT_BASE_train_NOTA_max_query_80K.json",
-"small_dataset": "data/bert_base/BASE_TRAIN_NOTA_100.json",
-"batch_folding": "data/train_batch_folding_100.json",
+"docred_base": "/home/nlp/amirdnc/data/docred/tacred_format/train_distant.json",
+"doc_tac": "/home/nlp/amirdnc/data/docred_tacred/train_united.json",
 };
 
 local dev_data = {
 "tacred_base": "/home/nlp/amirdnc/data/tacred/data/json/dev.json",
-//"on_the_fly":"data/dev_NOTA_10K.json",
-"normal": "data/bert_base/BASE_VAL_NOTA_100.json",
-"full_training": "data/bert_base/BASE_VAL_NOTA_5K.json" ,
-"max_query_training": "data/bert_base/BASE_VAL_NOTA_5K.json" ,
-"small_dataset": "data/bert_base/BASE_VAL_NOTA_100.json" ,
-"batch_folding": "data/dev_batch_folding_100.json" ,
-"N_way_is_10": "data/bert_base/BASE_VAL_NOTA_5K.json" ,
-"no_entities": "data/bert_base/BASE_VAL_NOTA_5K.json"
+"docred_base": "/home/nlp/amirdnc/data/docred/tacred_format/dev.json",
+"doc_tac": "/home/nlp/amirdnc/data/tacred/data/json/dev.json",
+};
+local num_labels = {
+"tacred_base": 42,
+"docred_base": 96,
+"doc_tac": 138
 };
 //local bert_type = 'bert-large-cased';
-local batch_size = 3;
-local setup = "tacred_base";
+local batch_size = 9;
+local setup = "doc_tac";
 local lr_with_find = 0.00002;
 local instances_per_epoch = 100;
-local reader = "multi_ner_reader";
+//local reader = "relation_ner_reader";
+local reader = "tacred_reader";
 {
   "dataset_reader": {
     "type": reader,
@@ -49,7 +45,7 @@ local reader = "multi_ner_reader";
           "use_starting_offsets": false
       }
     },
-    //"mode": mode,
+    "mode": mode,
   },
     "validation_dataset_reader": {
     "type": reader,
@@ -70,14 +66,15 @@ local reader = "multi_ner_reader";
           "use_starting_offsets": false
       }
     },
-    //"mode": mode,
+    "mode": mode,
   },
   "train_data_path": train_data[setup] ,
   "validation_data_path": dev_data[setup],
   "model": {
-    //"type": "relation_clasification",
-    //"type": "relation_clasification_one_layer",
-    "type": "relation_clasification_multi_types",
+    //"type": "relation_ner_clasifications_with_embedding",
+    //"type": "relation_ner_clasifications",
+    "type": "relation_clasification_one_layer",
+    //"type": "relation_clasification_multi_types",
     "hidden_dim": 768,
     "add_distance_from_mean": true,
     "number_of_linear_layers": 2,
@@ -97,11 +94,11 @@ local reader = "multi_ner_reader";
         },
     },
     "regularizer": [["liner_layer", {"type": "l2", "alpha": 1e-02}], [".*", {"type": "l2", "alpha": 1e-07}]],
-    "devices": cuda
-
+    "devices": cuda,
+    "num_labels": num_labels[setup],
   },
   "iterator": {
-    "type": "basic",
+    "type": "shuffle",
     "batch_size": batch_size,
     "instances_per_epoch": null
   },

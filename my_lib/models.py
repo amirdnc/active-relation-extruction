@@ -47,7 +47,7 @@ BERT_BASE_CONFIG = {"attention_probs_dropout_prob": 0.1,
                    }
 linear = "linear"
 
-TACRED_NUM_LABELS = 42
+NER_NUM_LABELS = 17
 @Model.register('relation_clasification')
 class RelationClassification(Model):
     def __init__(self,
@@ -59,9 +59,11 @@ class RelationClassification(Model):
                  hidden_dim: int = 500,
                  add_distance_from_mean: bool = True,
                  drop_out_rate: float = 0.2,
-                 devices = 0):
+                 devices = 0,
+                 num_labels = 42):
 
         super().__init__(vocab,regularizer)
+        self.num_labels = num_labels
         self.embbedings = text_field_embedder
         self.bert_type_model = BERT_BASE_CONFIG
         self.extractor = EndpointSpanExtractor(input_dim=self.bert_type_model['hidden_size'], combination="x,y")
@@ -80,17 +82,16 @@ class RelationClassification(Model):
         # for i in range(1,42):
         #     self.metrics['f1_{}'.format(i)] = F1Measure(i)
         self.first_liner_layer = torch.nn.Linear(self.bert_type_model['hidden_size'] * 2,hidden_dim)
-        self.second_liner_layer = torch.nn.Linear(hidden_dim, TACRED_NUM_LABELS)  # TACRED labels
-        self.do_skip_connection = skip_connection
+        self.second_liner_layer = torch.nn.Linear(hidden_dim, self.num_labels)  # TACRED labels
 
         self.number_of_linear_layers = number_of_linear_layers
         self.tanh = torch.nn.Tanh()
         self.drop_layer = torch.nn.Dropout(p=drop_out_rate)
-        self.add_distance_from_mean = add_distance_from_mean
-        self.no_relation_vector = torch.randn([1,self.bert_type_model['hidden_size']*2],device=self.device,requires_grad=False)
-        self.no_relation_vector = Parameter(self.no_relation_vector, requires_grad=True)
         self.counter = 0
 
+    def one_hot(self, v, size):
+        res = torch.zeros(torch.tensor(v.size()), size).to(self.device)
+        return res.scatter_(1, v.view(-1, 1), 1)
 
     @overrides
     def forward(self, sen, loc, clean_tokens = None, test_clean_text = None,
@@ -102,7 +103,8 @@ class RelationClassification(Model):
         scores, embeddings = self.go_thorugh_mlp(bert_represntation, self.first_liner_layer, self.second_liner_layer)
         scores = scores.to(self.device)
         output_dict = {}
-        output_dict['embeddings'] = embeddings
+        # output_dict['embeddings'] = embeddings
+        # output_dict['indexes'] = loc
         if label is not None:
             loss = self.crossEntropyLoss(scores, label)
             output_dict["loss"] = loss
@@ -110,7 +112,7 @@ class RelationClassification(Model):
         self.metrics['accuracy'](scores, label)
         for k in self.metrics.keys():
             self.metrics[k](scores, label)
-        output_dict["scores"] = scores.view(-1, TACRED_NUM_LABELS)
+        output_dict["scores"] = scores.view(-1, self.num_labels)
         return output_dict
 
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
@@ -127,8 +129,6 @@ class RelationClassification(Model):
         after_first_layer = self.drop_layer(first_layer(after_drop_out_layer))
         x = self.tanh(after_first_layer)
         x = second_layer(x)
-        # if self.do_skip_connection:
-        #     x = x + after_first_layer
         return x, after_drop_out_layer
 
     def extract_vectors_from_markers(self, embbeds, location):
@@ -149,10 +149,11 @@ class RelationClassificationSingleLayer(RelationClassification):
                  hidden_dim: int = 500,
                  add_distance_from_mean: bool = True,
                  drop_out_rate: float = 0.2,
-                 devices=0
+                 devices=0,
+                 num_labels=42
                  ):
-        super().__init__(vocab, text_field_embedder, number_of_linear_layers, skip_connection, regularizer, hidden_dim, add_distance_from_mean, drop_out_rate, devices)
-        self.first_liner_layer = torch.nn.Linear(self.bert_type_model['hidden_size'] * 2, TACRED_NUM_LABELS)
+        super().__init__(vocab, text_field_embedder, number_of_linear_layers, skip_connection, regularizer, hidden_dim, add_distance_from_mean, drop_out_rate, devices, num_labels)
+        self.first_liner_layer = torch.nn.Linear(self.bert_type_model['hidden_size'] * 2, self.num_labels)
 
     @overrides
     def go_thorugh_mlp(self, concat_represntentions,first_layer, second_layer):
@@ -194,17 +195,73 @@ class SiameseRelations(RelationClassification):
         bert_represntation = self.extract_vectors_from_markers(bert_context_for_relation, loc)
         concat_represntentions = bert_represntation.to(self.device)
         after_drop_out_layer = self.drop_layer(concat_represntentions)
-        after_first_layer = self.first_liner_layer(after_drop_out_layer)
+        after_first_layer = self.tanh(self.first_liner_layer(after_drop_out_layer))
         return after_first_layer
 
+    def s1_embedding(self, sen1, loc):
+        return {'embeddings': self.get_embeddings()}
     @overrides
     def forward(self, sen1, sen2, loc, clean_tokens=None, test_clean_text=None,
                 label=None) -> Dict[str, torch.Tensor]:
+        if not sen2:
+            return self.s1_embedding(sen1, loc)
         loc = list(zip(*loc))
         emb0 = self.get_embeddings(sen1, loc[0])
         emb1 = self.get_embeddings(sen2, loc[1])
         x = torch.cat((emb0, emb1), 1)
         scores = self.second_liner_layer(x)
+        scores = scores.to(self.device)
+        output_dict = {}
+        # logger.info('label = {}'.format(label))
+        if label is not None:
+            loss = self.crossEntropyLoss(scores, label)
+            output_dict["loss"] = loss
+            self.counter += 1
+        self.metrics['accuracy'](scores, label)
+        self.metrics['f1'](scores, label)
+        for k in self.metrics.keys():
+            self.metrics[k](scores, label)
+        output_dict["scores"] = scores
+        return output_dict
+
+
+@Model.register('siamese_ner_sentences')
+class SiameseNerRelations(SiameseRelations):
+    def __init__(self,
+                 vocab: Vocabulary,
+                 text_field_embedder: TextFieldEmbedder,
+                 number_of_linear_layers : int = 2,
+                 skip_connection: bool = False,
+                 regularizer: RegularizerApplicator = None,
+                 hidden_dim: int = 500,
+                 add_distance_from_mean: bool = True,
+                 drop_out_rate: float = 0.4,
+                 devices=0
+                 ):
+        super().__init__(vocab, text_field_embedder, number_of_linear_layers, skip_connection, regularizer, hidden_dim, add_distance_from_mean, drop_out_rate, devices)
+        self.first_liner_layer = torch.nn.Linear(self.bert_type_model['hidden_size'] * 2,
+                                                 self.bert_type_model['hidden_size'] * 2)
+        self.second_liner_layer = torch.nn.Linear((self.bert_type_model['hidden_size'] + NER_NUM_LABELS) * 4, self.bert_type_model['hidden_size'] * 2)
+        self.third_liner_layer = torch.nn.Linear(self.bert_type_model['hidden_size'] * 2, 2)
+
+    @overrides
+    def go_thorugh_mlp(self, concat_represntentions, first_layer, second_layer):
+        # return self.relation_layer_norm(concat_represntentions)
+        concat_represntentions = concat_represntentions.to(self.device)
+        after_drop_out_layer = self.drop_layer(concat_represntentions)
+        after_first_layer = self.tanh(first_layer(after_drop_out_layer))
+        scores = second_layer(after_first_layer)
+        return scores
+    @overrides
+    def forward(self, sen1, sen2, loc, clean_tokens=None, test_clean_text=None,
+                label=None, ner=None) -> Dict[str, torch.Tensor]:
+        loc = list(zip(*loc))
+        emb0 = self.get_embeddings(sen1, loc[0])
+        emb1 = self.get_embeddings(sen2, loc[1])
+
+        ner_embd = [self.one_hot(x.to(self.device), NER_NUM_LABELS) for x in torch.tensor(list(zip(*ner)))]
+        x = torch.cat([emb0, emb1] + ner_embd, 1)
+        scores = self.go_thorugh_mlp(x, self.second_liner_layer, self.third_liner_layer)
         scores = scores.to(self.device)
         output_dict = {}
         # logger.info('label = {}'.format(label))
@@ -234,7 +291,7 @@ class RelationClassificationSMultiTypes(RelationClassification):
         super().__init__(vocab, text_field_embedder, number_of_linear_layers, skip_connection, regularizer, hidden_dim, add_distance_from_mean, drop_out_rate, devices)
         self.hidden_size = self.bert_type_model['hidden_size'] * 2* 3
         self.first_liner_layer = torch.nn.Linear(self.hidden_size, self.bert_type_model['hidden_size'])
-        self.second_liner_layer = torch.nn.Linear(self.bert_type_model['hidden_size'], TACRED_NUM_LABELS)
+        self.second_liner_layer = torch.nn.Linear(self.bert_type_model['hidden_size'], self.num_labels)
         self.drop_layer2d = torch.nn.Dropout2d(0.2)
         self.batch_norm_layer = torch.nn.BatchNorm1d(self.hidden_size)
     def forward(self, sen0, sen1, sen2, loc0, loc1, loc2, clean_tokens = None, test_clean_text = None,
@@ -262,5 +319,104 @@ class RelationClassificationSMultiTypes(RelationClassification):
         self.metrics['accuracy'](scores, label)
         for k in self.metrics.keys():
             self.metrics[k](scores, label)
-        output_dict["scores"] = scores.view(-1, TACRED_NUM_LABELS)
+        output_dict["scores"] = scores.view(-1, self.num_labels)
         return output_dict
+
+@Model.register('relation_ner_clasifications')
+class RelationNerClassification(RelationClassification):
+    def __init__(self,
+                 vocab: Vocabulary,
+                 text_field_embedder: TextFieldEmbedder,
+                 number_of_linear_layers: int = 2,
+                 skip_connection: bool = False,
+                 regularizer: RegularizerApplicator = None,
+                 hidden_dim: int = 500,
+                 add_distance_from_mean: bool = True,
+                 drop_out_rate: float = 0.2,
+                 devices=0):
+        super().__init__(vocab, text_field_embedder, number_of_linear_layers, skip_connection, regularizer,
+                         hidden_dim, add_distance_from_mean, drop_out_rate, devices)
+        self.ner_layer1 = torch.nn.Linear(self.bert_type_model['hidden_size'], hidden_dim)
+        self.ner_layer2 = torch.nn.Linear(hidden_dim, NER_NUM_LABELS)
+
+    def classify_data(self, represntation, l1, l2, label, output_dict, metric):
+        scores, _ = self.go_thorugh_mlp(represntation, l1, l2)
+        scores = scores.to(self.device)
+        if label is not None:
+            loss = self.crossEntropyLoss(scores, label)
+            output_dict["loss"] += loss
+            metric(scores, label)
+        return output_dict, scores
+    @overrides
+    def forward(self, sen, loc, clean_tokens=None, test_clean_text=None,
+                label=None, ner=None) -> Dict[str, torch.Tensor]:
+
+        bert_context_for_relation = self.embbedings(sen)
+        bert_represntation = self.extract_vectors_from_markers(bert_context_for_relation, loc)
+        s_rep, o_rep = bert_represntation.split(self.bert_type_model['hidden_size'], dim=1)
+        s_labels = torch.tensor(list(zip(*ner))[0]).to(self.device)
+        o_labels = torch.tensor(list(zip(*ner))[1]).to(self.device)
+        output_dict = {'loss': 0}
+        output_dict, scores = self.classify_data(bert_represntation, self.first_liner_layer, self.second_liner_layer, label, output_dict, self.metrics['f1'])
+        output_dict, scores = self.classify_data(s_rep, self.ner_layer1,
+                                                 self.ner_layer2, s_labels, output_dict, self.metrics['accuracy'])
+        output_dict, scores = self.classify_data(s_rep, self.ner_layer1,
+                                                 self.ner_layer2, o_labels, output_dict, self.metrics['accuracy'])
+        return output_dict
+
+    @overrides
+    def get_metrics(self, reset: bool = False) -> Dict[str, float]:
+        d = super().get_metrics(reset)
+        d['ner_accuracy'] = self.metrics['accuracy'].get_metric(reset)
+        return d
+
+@Model.register('relation_ner_clasifications_with_embedding')
+class RelationNerClassificationWithEmmbedding(RelationNerClassification):
+    def __init__(self,
+                 vocab: Vocabulary,
+                 text_field_embedder: TextFieldEmbedder,
+                 number_of_linear_layers: int = 2,
+                 skip_connection: bool = False,
+                 regularizer: RegularizerApplicator = None,
+                 hidden_dim: int = 500,
+                 add_distance_from_mean: bool = True,
+                 drop_out_rate: float = 0.2,
+                 devices=0):
+        super().__init__(vocab, text_field_embedder, number_of_linear_layers, skip_connection, regularizer,
+                         hidden_dim, add_distance_from_mean, drop_out_rate, devices)
+
+        self.first_liner_layer = torch.nn.Linear((self.bert_type_model['hidden_size'] + NER_NUM_LABELS)* 2,hidden_dim)
+        self.ner_layer1 = torch.nn.Linear(self.bert_type_model['hidden_size'], hidden_dim)
+        self.ner_layer2 = torch.nn.Linear(hidden_dim, NER_NUM_LABELS)
+
+    @overrides
+    def forward(self, sen, loc, clean_tokens=None, test_clean_text=None,
+                label=None, ner=None) -> Dict[str, torch.Tensor]:
+        bert_context_for_relation = self.embbedings(sen)
+        bert_represntation = self.extract_vectors_from_markers(bert_context_for_relation, loc)
+        # s_rep, o_rep = bert_represntation.split(self.bert_type_model['hidden_size'], dim=1)
+        s_labels = torch.tensor(list(zip(*ner))[0]).to(self.device)
+        o_labels = torch.tensor(list(zip(*ner))[1]).to(self.device)
+        output_dict = {'loss': 0}
+        # output_dict, s_scores = self.classify_data(s_rep, self.ner_layer1,
+        #                                          self.ner_layer2, s_labels, output_dict,
+        #                                          self.metrics['accuracy'])
+        # output_dict, o_scores = self.classify_data(s_rep, self.ner_layer1,
+        #                                          self.ner_layer2, o_labels, output_dict,
+        #                                          self.metrics['accuracy'])
+        s_scores = self.one_hot(s_labels, NER_NUM_LABELS)
+        o_scores = self.one_hot(o_labels, NER_NUM_LABELS)
+        relation_rep = torch.cat([bert_represntation, s_scores, o_scores], dim=1)
+        output_dict, scores = self.classify_data(relation_rep, self.first_liner_layer,
+                                                 self.second_liner_layer, label, output_dict,
+                                                 self.metrics['f1'])
+        output_dict['scores'] = scores
+        output_dict['label'] = label
+
+        return output_dict
+
+    @overrides
+    def get_metrics(self, reset: bool = False) -> Dict[str, float]:
+        d = super().get_metrics(reset)
+        d['ner_accuracy'] = self.metrics['accuracy'].get_metric(reset)
+        return d

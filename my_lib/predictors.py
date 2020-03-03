@@ -1,4 +1,5 @@
 import json
+import sys
 
 from allennlp.common import JsonDict
 from allennlp.data import DatasetReader, Instance
@@ -6,6 +7,28 @@ from allennlp.models import Model
 from allennlp.predictors import Predictor
 from overrides import overrides
 import  numpy as np
+
+
+class Reader:
+    __instance = None
+
+    def __init__(self):
+        if Reader.__instance is None:
+            raise Exception("This class is a singleton!")
+        Reader.__instance = self
+        self.path = sys.argv[3]
+        with open(self.path, 'r') as f:
+            self.data = json.load(f)
+
+    def read(self):
+        for d in self.data:
+            yield d
+
+    @staticmethod
+    def getInstance():
+        if Reader.__instance is None:
+            Reader()
+        return Reader.__instance
 
 
 @Predictor.register('base-tagger')
